@@ -1,0 +1,17 @@
+<library path="src">
+  <class name="IrisGui" type="iris_gui.iris_gui_plugin.IrisGuiPlugin" base_class_type="rqt_gui_py::Plugin">
+    <description>
+    Display for iris.
+    </description>
+    <qtgui>
+      <group>
+        <label>Visualization</label>
+        <icon type="theme">folder</icon>
+        <statustip>Plugins related to visualization.</statustip>
+      </group>
+      <label>IRIS GUI</label>
+      <icon type="theme">video-display</icon>
+      <statustip>IRIS GUI</statustip>
+    </qtgui>
+  </class>
+</library>

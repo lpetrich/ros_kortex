@@ -1,0 +1,51 @@
+<!--
+    Author: Laura Petrich
+    Assistive Robotic Interface for Stereo Vision
+-->
+
+<launch>  
+
+    <group ns="cam1">
+        <node pkg="usb_cam" type="usb_cam_node" name="camera">
+            <param name="video_device" value="/dev/video1" />
+            <param name="framerate" value="15" />
+        </node>
+        <!--
+        <node name="trackers" pkg="mtf_bridge" type="interface_tracker_node" output="screen"> 
+            <param name="shm_name" value="shm1"/>
+            <remap from="/init_buffer" to="/cam1/init_buffer"/>
+            <remap from="/input_image" to="/cam1/input_image"/>
+            <remap from="/task_coordinates" to="/cam1/task_coordinates"/>
+        </node>
+        <node name="SharedImageWriter" pkg="mtf_bridge" type="SharedImageWriter" output="screen"> 
+            <param name="shm_name" value="shm1"/>
+            <remap from="/camera/image_raw" to="/cam1/camera/image_raw"/>
+        </node>
+        -->
+    </group> 
+
+    <group ns="cam2">
+        <node pkg="usb_cam" type="usb_cam_node" name="camera">
+            <param name="video_device" value="/dev/video2" />
+            <param name="framerate" value="15" />
+        </node>
+        <!--
+        <node name="trackers" pkg="mtf_bridge" type="interface_tracker_node" output="screen"> 
+            <param name="shm_name" value="shm2"/>
+            <remap from="/init_buffer" to="/cam2/init_buffer"/>
+            <remap from="/input_image" to="/cam2/input_image"/>
+            <remap from="/task_coordinates" to="/cam2/task_coordinates"/>
+        </node>
+        <node name="SharedImageWriter" pkg="mtf_bridge" type="SharedImageWriter" output="screen"> 
+            <param name="shm_name" value="shm2"/>
+            <remap from="/camera/image_raw" to="/cam2/camera/image_raw"/>
+        </node>
+        -->
+    </group> 
+    <!--
+    <node pkg="user_interface" type="user_interface" name="user_interface" output="screen"/>  
+    <node pkg="geometric_error" type="error_control" name="error_control" output="screen"/> 
+    <node pkg="geometric_error" type="error_grouper.py" name="error_grouper" output="screen"/>
+    -->
+    
+</launch>
