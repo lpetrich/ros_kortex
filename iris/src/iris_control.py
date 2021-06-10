@@ -27,14 +27,13 @@ MAXV_RY = 0.3
 MAXV_RZ = 0.5
 MAXV_GR = 0.3 # gripper
 
+RETRACT_ACTION_IDENTIFIER = 1
+HOME_ACTION_IDENTIFIER = 2
+
 class IrisControl:
 	def __init__(self):
 		# global 
 		self.run = True
-		# retract identifier = 1; home identifier = 2
-		self.RETRACT_ACTION_IDENTIFIER = 1
-		self.HOME_ACTION_IDENTIFIER = 2
-		# self.fetal_identifier = 10000
 
 		self.last_action_notif_type = None
 		self.zero_vector = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -103,7 +102,7 @@ class IrisControl:
 		self.print_menu()
 
 	def shutdown(self):
-		# success = self.send_home()
+		# success = self.send_action_command()
 		# if not success:
 			# rospy.logerr("Error moving back to home position on shutdown.")
 		rospy.loginfo("Shutting down control node.")
@@ -132,10 +131,17 @@ class IrisControl:
 		# button 8 pressed, send robot home
 		if msg.buttons[8]:
 			rospy.loginfo("Button 8 pressed: sending robot home.")
-			success = self.send_home()
+			success = self.send_action_command(HOME_ACTION_IDENTIFIER)
 			if not success:
 				rospy.logerr("Error moving back to home position.")
-		
+
+		# button 9 pressed, retract robot
+		if msg.buttons[9]:
+			rospy.loginfo("Button 9 pressed: sending robot to retract position.")
+			success = self.send_action_command(RETRACT_ACTION_IDENTIFIER)
+			if not success:
+				rospy.logerr("Error moving back to retract position.")
+
 		# button 10 pressed, stop robot motion
 		if msg.buttons[10]:
 			rospy.loginfo("Button 10 pressed: stopping motion")
@@ -177,11 +183,12 @@ class IrisControl:
 			rospy.sleep(2.5)
 			return True
 
-	def send_home(self):
+	def send_action_command(self, action_identifier):
 		# The Home Action is used to home the robot. It cannot be deleted and is always ID #2:
 		self.last_action_notif_type = None
 		req = ReadActionRequest()
-		req.input.identifier = self.HOME_ACTION_IDENTIFIER
+		# req.input.identifier = self.HOME_ACTION_IDENTIFIER
+		req.input.identifier = action_identifier
 		try:
 			res = self.read_action_srv(req)
 		except rospy.ServiceException:
@@ -264,7 +271,8 @@ class IrisControl:
 		cmd.twist.angular_x = axes[3] * MAXV_RX
 		cmd.twist.angular_y = axes[4] * MAXV_RY
 		cmd.twist.angular_z = axes[5] * MAXV_RZ
-		rospy.loginfo("Sending the cartesian velocity command: ")
+		rospy.loginfo("Sending the cartesian velocity command: [%s, %s, %s, %s, %s, %s]", \
+			str(cmd.twist.linear_x), str(cmd.twist.linear_y), str(cmd.twist.linear_z), str(cmd.twist.angular_x), str(cmd.twist.angular_y), str(cmd.twist.angular_z))
 		try:
 			self.cartesian_velocity_pub.publish(cmd)
 		except rospy.ServiceException:
@@ -373,7 +381,7 @@ class IrisControl:
 	#       else:
 	#           time.sleep(0.01)
 
-	# def send_home(self):
+	# def send_action_command(self):
 	#   # The Home Action is used to home the robot. It cannot be deleted and is always ID #2:
 	#   self.last_action_notif_type = None
 	#   # self.clear_faults
@@ -411,7 +419,7 @@ if __name__ == "__main__":
 			# rospy.logerr("The robot encountered an error while going home.")
 		success = robot.clear_faults()
 		success &= robot.subscribe_to_a_robot_notification()
-		success &= robot.send_home()
+		success &= robot.send_action_command(HOME_ACTION_IDENTIFIER)
 		if not success:
 			rospy.logerr("The robot encountered an error while initializing.")
 		rate = rospy.Rate(40) # 40hz
