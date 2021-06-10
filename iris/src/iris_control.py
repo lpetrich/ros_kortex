@@ -19,8 +19,8 @@ from kortex_driver.msg import *
 from sensor_msgs.msg import Joy
 
 # Declare max velocities 
-MAXV_TX = 0.1
-MAXV_TY = 0.1
+MAXV_TX = 0.05
+MAXV_TY = 0.05
 MAXV_TZ = 0.08
 MAXV_RX = 0.5
 MAXV_RY = 0.3
@@ -29,12 +29,17 @@ MAXV_GR = 0.3 # gripper
 
 class IrisControl:
 	def __init__(self):
+		# global 
 		self.run = True
+		# retract identifier = 1; home identifier = 2
+		self.RETRACT_ACTION_IDENTIFIER = 1
 		self.HOME_ACTION_IDENTIFIER = 2
+		# self.fetal_identifier = 10000
+
+		self.last_action_notif_type = None
 		self.zero_vector = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 		self.axes_vector = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-		self.fetal_identifier = 10000
-
+		self.prev_cv_cmd = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 		self.gripper_cmd = 0.0
 		self.prev_gripper_cmd = 0.0
 
@@ -44,29 +49,17 @@ class IrisControl:
 		self.is_gripper_present = rospy.get_param("/" + self.robot_name + "/is_gripper_present", True)
 		self.input_device = rospy.get_param('~input_device', "flightstick")
 		self.control_scheme = rospy.get_param('~control_scheme', "6D")
-		rospy.loginfo("Using robot_name " + self.robot_name + " , robot has " + str(self.degrees_of_freedom) + \
-			" degrees of freedom, is_gripper_present is " + str(self.is_gripper_present) + \
-			", using input device " + self.input_device + " and control scheme " + self.control_scheme)
-
-		if self.input_device == "keyboard":
-			print("Keyboard")
-		elif self.input_device == "joystick_box":
-			print("Joystick Box")
-		elif self.input_device == "flightstick":
-			print("Flightstick")
-		elif self.input_device == "spacemouse":
-			print("SpaceMouse")
-		else:
-			print("Unknown Input Device")
+		self.reference_frame = rospy.get_param('~reference_frame', "mixed")
+		# rospy.loginfo("Using robot_name " + self.robot_name + " , robot has " + str(self.degrees_of_freedom) + \
+			# " degrees of freedom, is_gripper_present is " + str(self.is_gripper_present) + \
+			# ", using input device " + self.input_device + " and control scheme " + self.control_scheme)
 		
 		# Init subscribers and publishers
 		self.action_topic_sub = rospy.Subscriber("/" + self.robot_name + "/action_topic", ActionNotification, self.action_topic_callback)
 		self.joy_sub = rospy.Subscriber("/joy", Joy, self.joy_callback)
 		self.cartesian_velocity_pub = rospy.Publisher("/" + self.robot_name + "/in/cartesian_velocity", TwistCommand, queue_size=10)
-		
-		self.last_action_notif_type = None
 
-		# Init the services
+		# Init services
 		clear_faults_full_name = '/' + self.robot_name + '/base/clear_faults'
 		rospy.wait_for_service(clear_faults_full_name)
 		self.clear_faults_srv = rospy.ServiceProxy(clear_faults_full_name, Base_ClearFaults)
@@ -103,14 +96,25 @@ class IrisControl:
 		rospy.wait_for_service(activate_publishing_of_action_notification_full_name)
 		self.activate_publishing_of_action_notification_srv = rospy.ServiceProxy(activate_publishing_of_action_notification_full_name, OnNotificationActionTopic)
 
+		get_product_configuration_full_name = '/' + self.robot_name + '/base/get_product_configuration'
+		rospy.wait_for_service(get_product_configuration_full_name)
+		self.get_product_configuration = rospy.ServiceProxy(get_product_configuration_full_name, GetProductConfiguration)
+		
+		self.print_menu()
+
 	def shutdown(self):
-		success = self.go_home()
-		if not success:
-			rospy.logerr("Error moving back to home position on shutdown.")
+		# success = self.send_home()
+		# if not success:
+			# rospy.logerr("Error moving back to home position on shutdown.")
+		rospy.loginfo("Shutting down control node.")
+
+	def action_topic_callback(self, notif):
+		self.last_action_notif_type = notif.action_event
 
 	def joy_callback(self, msg):
 		# rospy.loginfo(rospy.get_caller_id() + " axes data: %s", str(msg.axes))
 		self.axes_vector = msg.axes
+		
 		# check for gripper commands
 		if msg.buttons[0]: # trigger button - close gripper
 			self.gripper_cmd = -1 * MAXV_GR
@@ -119,45 +123,26 @@ class IrisControl:
 		else: # both buttons 0 and 1 are zero
 			self.gripper_cmd = 0.0
 
-		if msg.buttons[10]:
-			rospy.loginfo(rospy.get_caller_id() + " button 10 pressed: stopping motion")
-			self.send_cartesian_velocity(1, self.zero_vector)
-		if msg.buttons[6]: # shutdown node
+		# button 6 pressed, shutdown node
+		if msg.buttons[6]: 
 			self.run = False
-			success = self.go_home()
+			rospy.signal_shutdown("Button 6 pressed: initiating shutdown sequence.") 
 			rospy.sleep(0.1)
-			rospy.signal_shutdown("Button 6 pressed, initiating shutdown sequence.") 
-
-
-	def action_topic_callback(self, notif):
-		self.last_action_notif_type = notif.action_event
-
-	def remap_axes(self, vec):
-		ref_frame = 1
-		cmd = [vec[1], vec[0], vec[3], 0.5 * vec[5], 0.5 * vec[4], vec[2]]
-		if self.control_scheme == "6D" and self.input_device == "flightstick":
-			ref_frame = 1
-			cmd = [vec[1], vec[0], vec[3], 0.5 * vec[5], 0.5 * vec[4], vec[2]]
-
-		elif self.control_scheme == "navray" and self.input_device == "flightstick": # pitch, yaw, and forward/backward
-			ref_frame = 2
-			# cmd = [0.0, 0.0, vec[5], vec[1], -1.0 * vec[0], 0.0]
-			cmd = [0.0, 0.0, vec[5], vec[1], vec[2], 0.0]
-
-		self.send_cartesian_velocity(ref_frame, cmd)
-
-	def step(self):
-		# print("Step: ", str(self.axes_vector))
-		if self.run:
-			self.remap_axes(self.axes_vector)
-			# print(str(self.gripper_cmd) + " : " + str(self.prev_gripper_cmd))
-			if self.gripper_cmd != self.prev_gripper_cmd:
-				success = self.send_gripper_command(self.gripper_cmd)
-				self.prev_gripper_cmd = self.gripper_cmd
+		
+		# button 8 pressed, send robot home
+		if msg.buttons[8]:
+			rospy.loginfo("Button 8 pressed: sending robot home.")
+			success = self.send_home()
+			if not success:
+				rospy.logerr("Error moving back to home position.")
+		
+		# button 10 pressed, stop robot motion
+		if msg.buttons[10]:
+			rospy.loginfo("Button 10 pressed: stopping motion")
+			self.send_cartesian_velocity(1, self.zero_vector)
 
 	def wait_for_action_end_or_abort(self):
-		# while not rospy.is_shutdown():
-		while True:
+		while not rospy.is_shutdown():
 			if (self.last_action_notif_type == ActionEvent.ACTION_END):
 				rospy.loginfo("Received ACTION_END notification")
 				return True
@@ -167,7 +152,7 @@ class IrisControl:
 			else:
 				time.sleep(0.01)
 
-	def example_subscribe_to_a_robot_notification(self):
+	def subscribe_to_a_robot_notification(self):
 		# Activate the publishing of the ActionNotification
 		req = OnNotificationActionTopicRequest()
 		rospy.loginfo("Activating the action notifications...")
@@ -192,7 +177,7 @@ class IrisControl:
 			rospy.sleep(2.5)
 			return True
 
-	def go_home(self):
+	def send_home(self):
 		# The Home Action is used to home the robot. It cannot be deleted and is always ID #2:
 		self.last_action_notif_type = None
 		req = ReadActionRequest()
@@ -214,12 +199,13 @@ class IrisControl:
 				rospy.logerr("Failed to call ExecuteAction")
 				return False
 			else:
-				rospy.sleep(4.0)
-				rospy.loginfo("Robot is in home position.")
-				return True
-				# return self.wait_for_action_end_or_abort()
+				return self.wait_for_action_end_or_abort()
 
 	def set_cartesian_reference_frame(self):
+		# CARTESIAN_REFERENCE_FRAME_UNSPECIFIED = 0
+		# CARTESIAN_REFERENCE_FRAME_MIXED = 1
+		# CARTESIAN_REFERENCE_FRAME_TOOL = 2
+		# CARTESIAN_REFERENCE_FRAME_BASE = 3
 		self.last_action_notif_type = None
 		# Prepare the request with the frame we want to set
 		req = SetCartesianReferenceFrameRequest()
@@ -278,7 +264,7 @@ class IrisControl:
 		cmd.twist.angular_x = axes[3] * MAXV_RX
 		cmd.twist.angular_y = axes[4] * MAXV_RY
 		cmd.twist.angular_z = axes[5] * MAXV_RZ
-		# rospy.loginfo("Sending the cartesian velocity command: ")
+		rospy.loginfo("Sending the cartesian velocity command: ")
 		try:
 			self.cartesian_velocity_pub.publish(cmd)
 		except rospy.ServiceException:
@@ -330,14 +316,104 @@ class IrisControl:
 		else:
 			rospy.logwarn("No gripper is present on the arm.")
 
+	def print_menu(self):
+		if self.input_device == "keyboard":
+			print("Keyboard")
+		elif self.input_device == "joystick_box":
+			print("Joystick Box")
+		elif self.input_device == "flightstick":
+			print("Flightstick")
+		elif self.input_device == "spacemouse":
+			print("SpaceMouse")
+		else:
+			print("Unknown Input Device")
+		rospy.loginfo("Using robot_name " + self.robot_name + " , robot has " + str(self.degrees_of_freedom) + \
+			" degrees of freedom, is_gripper_present is " + str(self.is_gripper_present) + \
+			", using input device " + self.input_device + ", control scheme " + self.control_scheme + " and ref frame " + self.reference_frame)
+
+	def remap_axes(self, vec):
+		ref_frame = 1
+		cmd = self.zero_vector
+
+		# 6 DOF robot control using the flightstick with translation in the base frame and orientation in tool frame
+		if self.control_scheme == "6D" and self.input_device == "flightstick":
+			ref_frame = 1
+			cmd = [vec[5], vec[4], vec[3], vec[1], -1.0 * vec[0], -1.0 * vec[2]]
+			# deadzone since doesnt reset to zero automatically, easy to accidentally bump
+			if abs(cmd[2]) < 0.5: 
+				cmd[2] = 0.0
+
+		elif self.control_scheme == "navray" and self.input_device == "flightstick": # pitch, yaw, and forward/backward
+			ref_frame = 2
+			# cmd = [0.0, 0.0, vec[5], vec[1], -1.0 * vec[0], 0.0]
+			cmd = [0.0, 0.0, vec[5], vec[1], vec[2], 0.0]
+
+		if cmd != self.prev_cv_cmd: 
+			self.send_cartesian_velocity(ref_frame, cmd)
+			self.prev_cv_cmd = cmd
+
+	def step(self):
+		# print("Step: ", str(self.axes_vector))
+		if self.run:
+			self.remap_axes(self.axes_vector)
+			# print(str(self.gripper_cmd) + " : " + str(self.prev_gripper_cmd))
+			if self.gripper_cmd != self.prev_gripper_cmd:
+				success = self.send_gripper_command(self.gripper_cmd)
+				self.prev_gripper_cmd = self.gripper_cmd
+
+	# def wait_for_action_end_or_abort(self):
+	#   # while not rospy.is_shutdown():
+	#   while True:
+	#       if (self.last_action_notif_type == ActionEvent.ACTION_END):
+	#           rospy.loginfo("Received ACTION_END notification")
+	#           return True
+	#       elif (self.last_action_notif_type == ActionEvent.ACTION_ABORT):
+	#           rospy.loginfo("Received ACTION_ABORT notification")
+	#           return False
+	#       else:
+	#           time.sleep(0.01)
+
+	# def send_home(self):
+	#   # The Home Action is used to home the robot. It cannot be deleted and is always ID #2:
+	#   self.last_action_notif_type = None
+	#   # self.clear_faults
+	#   req = ReadActionRequest()
+	#   req.input.identifier = self.HOME_ACTION_IDENTIFIER
+	#   try:
+	#       res = self.read_action_srv(req)
+	#   except rospy.ServiceException:
+	#       rospy.logerr("Failed to call ReadAction")
+	#       return False
+	#   # Execute the HOME action if we could read it
+	#   else:
+	#       # What we just read is the input of the ExecuteAction service
+	#       req = ExecuteActionRequest()
+	#       req.input = res.output
+	#       rospy.loginfo("Sending the robot home...")
+	#       try:
+	#           self.execute_action_srv(req)
+	#       except rospy.ServiceException:
+	#           rospy.logerr("Failed to call ExecuteAction")
+	#           return False
+	#       else:
+	#           # rospy.sleep(5.0)
+	#           # rospy.loginfo("Robot is in home position.")
+	#           # return True
+	#           return self.wait_for_action_end_or_abort()
+
+
 if __name__ == "__main__":
-	rospy.init_node('iris_control', anonymous=True)
 	try:
+		rospy.init_node('iris_control', anonymous=True)
 		robot = IrisControl()
-		rospy.on_shutdown(robot.shutdown)
-		success = robot.go_home()
+		# rospy.on_shutdown(robot.shutdown)
+		# if not success:
+			# rospy.logerr("The robot encountered an error while going home.")
+		success = robot.clear_faults()
+		success &= robot.subscribe_to_a_robot_notification()
+		success &= robot.send_home()
 		if not success:
-			rospy.logerr("The robot encountered an error while going home.")
+			rospy.logerr("The robot encountered an error while initializing.")
 		rate = rospy.Rate(40) # 40hz
 		while not rospy.is_shutdown():
 			robot.step()

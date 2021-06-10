@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<launch>
+
+    <!-- Robot namespace -->
+    <arg name="robot_name" default="iris"/>
+    <arg name="input_device" default="flightstick"/>
+    <arg name="control_scheme" default="6D"/>
+    <arg name="reference_frame" default="mixed"/>
+    <arg name="start_delay_seconds" default="0"/>
+
+    <!-- Launch the example in that namespace -->
+    <node name="iris_control" pkg="iris" type="iris_control.py" output="screen" launch-prefix="bash -c 'sleep $(arg start_delay_seconds); $0 $@' ">
+        <param name="robot_name" value="$(arg robot_name)"/>
+        <param name="input_device" value="$(arg input_device)"/>
+        <param name="control_scheme" value="$(arg control_scheme)"/>
+        <param name="reference_frame" value="$(arg reference_frame)"/>
+    </node>
+
+</launch>
